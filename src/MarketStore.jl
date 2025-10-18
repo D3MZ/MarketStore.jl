@@ -11,7 +11,7 @@ const polygon_spacing_seconds = Dates.value(polygon_spacing) / 1000
 const polygon_last_request = Ref{Union{Nothing, DateTime}}(nothing)
 
 format_endpoint(day::Date) = Dates.format(day, dateformat"yyyy-mm-dd")
-format_endpoint(moment::DateTime) = Dates.format(moment, dateformat"yyyy-mm-ddTHH:MM:SS")
+format_endpoint(moment::DateTime) = string(Dates.value(moment - epoch))
 format_endpoint(value) = string(value)
 
 function obtain_polygon_key()
@@ -127,11 +127,24 @@ function write_bar(io, bar)
     write(io, line)
 end
 
-function stream_polygon_minutes(ticker, csv_path; start=Date(1990, 1, 1), finish=today(), multiplier=1, timespan="minute", adjusted=true, limit=50_000, sort="asc")
+function stream_polygon_minutes(ticker, csv_path; start=Date(1990, 1, 1), finish=today(), multiplier=1, timespan="minute", adjusted=true, limit=50_000, sort="asc", resume=false)
     key = obtain_polygon_key()
     url = compose_polygon_url(ticker; start=start, finish=finish, multiplier=multiplier, timespan=timespan, adjusted=adjusted, limit=limit, sort=sort, key=key)
-    open(csv_path, "w") do io
-        write(io, "timestamp,open,high,low,close,volume,transactions,vwap\n")
+    mode = resume ? "a+" : "w"
+    open(csv_path, mode) do io
+        if resume
+            seekend(io)
+            position(io) == 0 && write(io, "timestamp,open,high,low,close,volume,transactions,vwap\n")
+            pos = position(io)
+            if pos > 0
+                seek(io, max(pos - 1, 0))
+                last = read(io, UInt8)
+                last == UInt8('\n') || write(io, '\n')
+                seekend(io)
+            end
+        else
+            write(io, "timestamp,open,high,low,close,volume,transactions,vwap\n")
+        end
         while true
             response = request_polygon(url)
             payload = JSON3.read(response.body)
@@ -151,6 +164,7 @@ function stream_polygon_minutes(ticker, csv_path; start=Date(1990, 1, 1), finish
     @info "Finished writing Polygon bars" path=csv_path
 end
 
-download_spy_minutes(csv_path; kwargs...) = stream_polygon_minutes("SPY", csv_path; kwargs...)
+download_minutes(ticker, csv_path; kwargs...) = stream_polygon_minutes(ticker, csv_path; kwargs...)
+download_spy_minutes(csv_path; kwargs...) = download_minutes("SPY", csv_path; kwargs...)
 
 end
